@@ -2,8 +2,6 @@ import os
 import re
 import codecs
 import numpy as np
-import theano
-
 
 models_path = "./models"
 eval_path = "./evaluation"
@@ -45,6 +43,7 @@ def shared(shape, name):
     """
     Create a shared object of a numpy array.
     """
+    import theano
     if len(shape) == 1:
         value = np.zeros(shape)  # bias are initialized with zeros
     else:
@@ -118,7 +117,7 @@ def iob_iobes(tags):
             new_tags.append(tag)
         elif tag.split('-')[0] == 'B':
             if i + 1 != len(tags) and \
-               tags[i + 1].split('-')[0] == 'I':
+                    tags[i + 1].split('-')[0] == 'I':
                 new_tags.append(tag)
             else:
                 new_tags.append(tag.replace('B-', 'S-'))
@@ -159,10 +158,11 @@ def iob_ranges(tags):
     IOB -> Ranges
     """
     ranges = []
+
     def check_if_closing_range():
-        if i == len(tags)-1 or tags[i+1].split('-')[0] == 'O':
+        if i == len(tags) - 1 or tags[i + 1].split('-')[0] == 'O':
             ranges.append((begin, i, type))
-    
+
     for i, tag in enumerate(tags):
         if tag.split('-')[0] == 'O':
             pass
@@ -238,14 +238,15 @@ def create_input(data, parameters, add_label, singletons=None):
 
 
 def evaluate(parameters, f_eval, raw_sentences, parsed_sentences,
-             id_to_tag, dictionary_tags):
+             id_to_tag, dictionary_tags=None):
     """
     Evaluate current model using CoNLL script.
     """
     n_tags = len(id_to_tag)
     predictions = []
     count = np.zeros((n_tags, n_tags), dtype=np.int32)
-
+    y_trues_tags = []
+    y_preds_tags = []
     for raw_sentence, data in zip(raw_sentences, parsed_sentences):
         input = create_input(data, parameters, False)
         if parameters['crf']:
@@ -256,9 +257,12 @@ def evaluate(parameters, f_eval, raw_sentences, parsed_sentences,
         assert len(y_preds) == len(y_reals)
         p_tags = [id_to_tag[y_pred] for y_pred in y_preds]
         r_tags = [id_to_tag[y_real] for y_real in y_reals]
+
         if parameters['tag_scheme'] == 'iobes':
             p_tags = iobes_iob(p_tags)
             r_tags = iobes_iob(r_tags)
+        y_trues_tags.extend(p_tags)
+        y_preds_tags.extend(r_tags)
         for i, (y_pred, y_real) in enumerate(zip(y_preds, y_reals)):
             new_line = " ".join(raw_sentence[i][:-1] + [r_tags[i], p_tags[i]])
             predictions.append(new_line)
@@ -276,28 +280,32 @@ def evaluate(parameters, f_eval, raw_sentences, parsed_sentences,
     # CoNLL evaluation results
     eval_lines = [l.rstrip() for l in codecs.open(scores_path, 'r', 'utf8')]
     for line in eval_lines:
-        print line
+        print(line)
 
     # Remove temp files
     # os.remove(output_path)
     # os.remove(scores_path)
 
     # Confusion matrix with accuracy for each tag
-    print ("{: >2}{: >7}{: >7}%s{: >9}" % ("{: >7}" * n_tags)).format(
-        "ID", "NE", "Total",
-        *([id_to_tag[i] for i in xrange(n_tags)] + ["Percent"])
-    )
-    for i in xrange(n_tags):
-        print ("{: >2}{: >7}{: >7}%s{: >9}" % ("{: >7}" * n_tags)).format(
+    confusion_matrix_head = "{: >2}{: >7}{: >7}%s{: >9}" % ("{: >7}" * n_tags)
+    confusion_matrix_head = confusion_matrix_head.format("ID", "NE", "Total",
+                                                         *([id_to_tag[i] for i in range(n_tags)] + ["Percent"]))
+    print(confusion_matrix_head)
+    for i in range(n_tags):
+        confusion_matrix_content = "{: >2}{: >7}{: >7}%s{: >9}" % ("{: >7}" * n_tags)
+        confusion_matrix_content = confusion_matrix_content.format(
             str(i), id_to_tag[i], str(count[i].sum()),
-            *([count[i][j] for j in xrange(n_tags)] +
-              ["%.3f" % (count[i][i] * 100. / max(1, count[i].sum()))])
-        )
-
-    # Global accuracy
-    print "%i/%i (%.5f%%)" % (
+            *([count[i][j] for j in range(n_tags)] +
+              ["%.3f" % (count[i][i] * 100. / max(1, count[i].sum()))]))
+        print(confusion_matrix_content)
+    print()
+    print("Global accuracy")
+    print("\t%i/%i (%.5f%%)" % (
         count.trace(), count.sum(), 100. * count.trace() / max(1, count.sum())
-    )
+    ))
 
     # F1 on all entities
-    return float(eval_lines[1].strip().split()[-1])
+    print("F1 on all entities")
+    F1_all = float(eval_lines[1].strip().split()[-1])
+    print("\t{}".format(F1_all))
+    return F1_all
